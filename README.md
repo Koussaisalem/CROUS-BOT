@@ -42,11 +42,12 @@ Telegram bot workflow to monitor CROUS housing search results and alert on new l
 
 - `CROUS_SEARCH_URL` (single URL mode)
 - `TELEGRAM_BOT_TOKEN` (token from BotFather)
-- `TELEGRAM_CHAT_ID` (chat/user ID that receives alerts)
+- `TELEGRAM_CHAT_ID` (single chat mode)
 
 For multiple locations, use:
 
 - `CROUS_SEARCH_URLS` (comma-separated URLs). When set, it overrides `CROUS_SEARCH_URL`.
+- `TELEGRAM_CHAT_IDS` (comma-separated chat IDs). When set, it overrides `TELEGRAM_CHAT_ID`.
 
 Optional:
 
@@ -88,6 +89,7 @@ GitHub Actions can run this monitor every 5 minutes (GitHub minimum schedule gra
 	- `CROUS_SEARCH_URLS` (optional, comma-separated multi-location mode)
 	- `TELEGRAM_BOT_TOKEN`
 	- `TELEGRAM_CHAT_ID`
+	- `TELEGRAM_CHAT_IDS` (optional, comma-separated multi-recipient mode)
 4. Enable the workflow in **Actions** tab (`CROUS Monitor`).
 5. Optional: trigger manually with **Run workflow**.
 	- Set `test_telegram=true` to send one healthcheck Telegram message immediately.
@@ -124,6 +126,10 @@ The next scheduled run applies them and confirms back in Telegram.
 Multi-location example for `CROUS_SEARCH_URLS`:
 
 `https://trouverunlogement.lescrous.fr/tools/42/search?bounds=...,https://trouverunlogement.lescrous.fr/tools/42/search?bounds=...`
+
+Multi-recipient example for `TELEGRAM_CHAT_IDS`:
+
+`6419615924,8305376405`
 
 ## Safety defaults
 

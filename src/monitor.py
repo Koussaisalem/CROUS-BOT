@@ -28,7 +28,7 @@ class MonitorService:
         self.state_store = StateStore(settings.state_db_path)
         self.notifier = TelegramNotifier(
             bot_token=settings.telegram_bot_token,
-            chat_id=settings.telegram_chat_id,
+            chat_ids=settings.telegram_chat_ids,
             timeout_seconds=settings.http_timeout_seconds,
         )
 
@@ -77,14 +77,14 @@ class MonitorService:
 
             chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
             chat_id = str(chat.get("id", ""))
-            if chat_id != self.settings.telegram_chat_id:
+            if chat_id not in self.settings.telegram_chat_ids:
                 continue
 
             text = str(message.get("text", "")).strip()
             if not text.startswith("/"):
                 continue
 
-            self._handle_telegram_command(text=text, dry_run=dry_run)
+            self._handle_telegram_command(text=text, chat_id=chat_id, dry_run=dry_run)
             processed += 1
 
         if max_update_id >= offset and not dry_run:
@@ -200,53 +200,57 @@ class MonitorService:
 
         return max_price, keywords
 
-    def _handle_telegram_command(self, text: str, dry_run: bool) -> None:
+    def _handle_telegram_command(self, text: str, chat_id: str, dry_run: bool) -> None:
         command_token, _, remainder = text.partition(" ")
         command = command_token.split("@", maxsplit=1)[0].lower()
         arg = remainder.strip()
 
         if command == "/setmaxprice":
             if not arg.isdigit():
-                self._reply("Usage: /setmaxprice <amount_in_eur>", dry_run=dry_run)
+                self._reply("Usage: /setmaxprice <amount_in_eur>", chat_id=chat_id, dry_run=dry_run)
                 return
             if not dry_run:
                 self.state_store.set_meta("filter_max_price_override", arg)
             max_price, keywords = self._get_effective_filters()
-            self._reply(self._format_filter_status(max_price, keywords), dry_run=dry_run)
+            self._reply(self._format_filter_status(max_price, keywords), chat_id=chat_id, dry_run=dry_run)
             return
 
         if command == "/clearmaxprice":
             if not dry_run:
                 self.state_store.set_meta("filter_max_price_override", "")
             max_price, keywords = self._get_effective_filters()
-            self._reply(self._format_filter_status(max_price, keywords), dry_run=dry_run)
+            self._reply(self._format_filter_status(max_price, keywords), chat_id=chat_id, dry_run=dry_run)
             return
 
         if command == "/setkeywords":
             if not arg:
-                self._reply("Usage: /setkeywords keyword1,keyword2", dry_run=dry_run)
+                self._reply("Usage: /setkeywords keyword1,keyword2", chat_id=chat_id, dry_run=dry_run)
                 return
             keywords = [item.strip().lower() for item in arg.split(",") if item.strip()]
             if not keywords:
-                self._reply("Usage: /setkeywords keyword1,keyword2", dry_run=dry_run)
+                self._reply("Usage: /setkeywords keyword1,keyword2", chat_id=chat_id, dry_run=dry_run)
                 return
             normalized = ",".join(OrderedDict.fromkeys(keywords).keys())
             if not dry_run:
                 self.state_store.set_meta("filter_keywords_override", normalized)
             max_price, active_keywords = self._get_effective_filters()
-            self._reply(self._format_filter_status(max_price, active_keywords), dry_run=dry_run)
+            self._reply(
+                self._format_filter_status(max_price, active_keywords),
+                chat_id=chat_id,
+                dry_run=dry_run,
+            )
             return
 
         if command == "/clearkeywords":
             if not dry_run:
                 self.state_store.set_meta("filter_keywords_override", "")
             max_price, keywords = self._get_effective_filters()
-            self._reply(self._format_filter_status(max_price, keywords), dry_run=dry_run)
+            self._reply(self._format_filter_status(max_price, keywords), chat_id=chat_id, dry_run=dry_run)
             return
 
         if command == "/showfilters":
             max_price, keywords = self._get_effective_filters()
-            self._reply(self._format_filter_status(max_price, keywords), dry_run=dry_run)
+            self._reply(self._format_filter_status(max_price, keywords), chat_id=chat_id, dry_run=dry_run)
             return
 
         if command == "/help":
@@ -257,17 +261,22 @@ class MonitorService:
                 "/clearmaxprice\n"
                 "/setkeywords kw1,kw2\n"
                 "/clearkeywords",
+                chat_id=chat_id,
                 dry_run=dry_run,
             )
             return
 
-        self._reply("Unknown command. Send /help for available commands.", dry_run=dry_run)
+        self._reply(
+            "Unknown command. Send /help for available commands.",
+            chat_id=chat_id,
+            dry_run=dry_run,
+        )
 
-    def _reply(self, text: str, dry_run: bool) -> None:
+    def _reply(self, text: str, chat_id: str, dry_run: bool) -> None:
         if dry_run:
             LOGGER.info("[DRY-RUN] Telegram reply: %s", text)
             return
-        self.notifier.send_text(text)
+        self.notifier.send_text(text, chat_id=chat_id)
 
     @staticmethod
     def _format_filter_status(max_price: int | None, keywords: tuple[str, ...]) -> str:

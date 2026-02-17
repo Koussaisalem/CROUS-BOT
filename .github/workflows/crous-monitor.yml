@@ -55,6 +55,7 @@ jobs:
           CROUS_SEARCH_URLS: ${{ secrets.CROUS_SEARCH_URLS }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
           POLL_INTERVAL_SECONDS: "300"
           POLL_JITTER_SECONDS: "0"
           HTTP_TIMEOUT_SECONDS: "20"

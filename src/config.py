@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 class Settings:
     crous_search_urls: tuple[str, ...]
     telegram_bot_token: str
-    telegram_chat_id: str
+    telegram_chat_ids: tuple[str, ...]
     poll_interval_seconds: int
     poll_jitter_seconds: int
     http_timeout_seconds: int
@@ -52,6 +52,17 @@ def _get_search_urls() -> tuple[str, ...]:
     return (_get_required("CROUS_SEARCH_URL"),)
 
 
+def _get_chat_ids() -> tuple[str, ...]:
+    raw_value = os.getenv("TELEGRAM_CHAT_IDS", "").strip()
+    if raw_value:
+        chat_ids = [item.strip() for item in raw_value.split(",") if item.strip()]
+        if not chat_ids:
+            raise ValueError("TELEGRAM_CHAT_IDS must contain at least one chat ID")
+        return tuple(dict.fromkeys(chat_ids))
+
+    return (_get_required("TELEGRAM_CHAT_ID"),)
+
+
 def _get_bool(name: str, default: bool) -> bool:
     raw_value = os.getenv(name, "true" if default else "false").strip().lower()
     if raw_value in {"1", "true", "yes", "on"}:
@@ -82,7 +93,7 @@ def load_settings() -> Settings:
     return Settings(
         crous_search_urls=_get_search_urls(),
         telegram_bot_token=_get_required("TELEGRAM_BOT_TOKEN"),
-        telegram_chat_id=_get_required("TELEGRAM_CHAT_ID"),
+        telegram_chat_ids=_get_chat_ids(),
         poll_interval_seconds=_get_int("POLL_INTERVAL_SECONDS", default=180, minimum=30),
         poll_jitter_seconds=_get_int("POLL_JITTER_SECONDS", default=20, minimum=0),
         http_timeout_seconds=_get_int("HTTP_TIMEOUT_SECONDS", default=15, minimum=5),
