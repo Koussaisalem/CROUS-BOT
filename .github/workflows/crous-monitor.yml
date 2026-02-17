@@ -1,0 +1,65 @@
+name: CROUS Monitor
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crous-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ensure state directory
+        run: mkdir -p .state
+
+      - name: Restore previous dedup state
+        id: cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: .state
+          key: crous-state-${{ github.run_id }}
+          restore-keys: |
+            crous-state-
+
+      - name: Run one polling cycle
+        env:
+          CROUS_SEARCH_URL: ${{ secrets.CROUS_SEARCH_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          POLL_INTERVAL_SECONDS: "300"
+          POLL_JITTER_SECONDS: "0"
+          HTTP_TIMEOUT_SECONDS: "20"
+          HTTP_MAX_RETRIES: "2"
+          STATE_DB_PATH: .state/state.db
+          LOG_LEVEL: INFO
+          USER_AGENT: CROUS-BOT/1.0 (+personal-use; github-actions)
+        run: python -m src.main --once
+
+      - name: Save updated dedup state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .state
+          key: crous-state-${{ github.run_id }}

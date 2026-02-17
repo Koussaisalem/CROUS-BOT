@@ -1,0 +1,211 @@
+from __future__ import annotations
+
+import json
+import logging
+import re
+from typing import Iterable
+from urllib.parse import urljoin
+
+import requests
+from bs4 import BeautifulSoup, Tag
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+from src.models import Listing
+
+LOGGER = logging.getLogger(__name__)
+
+PRICE_REGEX = re.compile(r"(\d{2,4})\s*€")
+
+
+class CrousClient:
+    def __init__(self, *, timeout_seconds: int, max_retries: int, user_agent: str) -> None:
+        self.timeout_seconds = timeout_seconds
+        self.session = requests.Session()
+        self.session.headers.update(
+            {
+                "User-Agent": user_agent,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.6",
+                "Cache-Control": "no-cache",
+            }
+        )
+        retry = Retry(
+            total=max_retries,
+            backoff_factor=1.0,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=frozenset(["GET"]),
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
+
+    def fetch_listings(self, search_url: str) -> list[Listing]:
+        response = self.session.get(search_url, timeout=self.timeout_seconds)
+        response.raise_for_status()
+        return parse_listings(response.text, base_url=search_url)
+
+
+def parse_listings(html: str, *, base_url: str) -> list[Listing]:
+    soup = BeautifulSoup(html, "html.parser")
+    page_text = soup.get_text(" ", strip=True).lower()
+    if "aucun logement trouvé" in page_text:
+        return []
+
+    json_listings = _parse_ld_json(soup, base_url)
+    if json_listings:
+        return _unique_by_fingerprint(json_listings)
+
+    card_listings = _parse_card_like_elements(soup, base_url)
+    return _unique_by_fingerprint(card_listings)
+
+
+def _parse_ld_json(soup: BeautifulSoup, base_url: str) -> list[Listing]:
+    listings: list[Listing] = []
+    scripts = soup.find_all("script", type="application/ld+json")
+    for script in scripts:
+        payload = script.string or script.get_text(strip=True)
+        if not payload:
+            continue
+
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+
+        for node in _iter_nodes(data):
+            if not isinstance(node, dict):
+                continue
+            if node.get("@type") not in {"Offer", "Product", "Residence", "Apartment"}:
+                continue
+
+            title = (node.get("name") or "").strip()
+            if not title:
+                continue
+
+            raw_url = node.get("url") or ""
+            listing_url = urljoin(base_url, raw_url) if raw_url else base_url
+            offers = node.get("offers") if isinstance(node.get("offers"), dict) else {}
+
+            price = None
+            raw_price = offers.get("price") if offers else None
+            if isinstance(raw_price, (str, int, float)):
+                try:
+                    price = int(float(raw_price))
+                except ValueError:
+                    price = None
+
+            listings.append(
+                Listing(
+                    title=title,
+                    url=listing_url,
+                    price_eur=price,
+                    city=_clean_optional_text(node.get("addressLocality")),
+                    residence=_clean_optional_text(node.get("brand")),
+                    external_id=_clean_optional_text(node.get("identifier")),
+                )
+            )
+    return listings
+
+
+def _iter_nodes(payload: object) -> Iterable[object]:
+    if isinstance(payload, list):
+        for item in payload:
+            yield from _iter_nodes(item)
+        return
+
+    if isinstance(payload, dict):
+        yield payload
+        for key in ["@graph", "itemListElement", "mainEntity", "items"]:
+            nested = payload.get(key)
+            if nested is not None:
+                yield from _iter_nodes(nested)
+
+
+def _parse_card_like_elements(soup: BeautifulSoup, base_url: str) -> list[Listing]:
+    listings: list[Listing] = []
+    candidates = soup.find_all("a", href=True)
+
+    for anchor in candidates:
+        href = anchor.get("href", "")
+        if not href:
+            continue
+        if "/logement/" not in href and "residence" not in href.lower():
+            continue
+
+        listing_url = urljoin(base_url, href)
+        container = _closest_container(anchor)
+        text_block = container.get_text(" ", strip=True) if container else anchor.get_text(" ", strip=True)
+        title = anchor.get_text(" ", strip=True)
+        if not title and container:
+            heading = container.find(["h2", "h3", "h4"])
+            title = heading.get_text(" ", strip=True) if heading else ""
+        if not title:
+            continue
+
+        price = _extract_price(text_block)
+        external_id = _extract_external_id(container, listing_url)
+
+        listings.append(
+            Listing(
+                title=title,
+                url=listing_url,
+                price_eur=price,
+                external_id=external_id,
+            )
+        )
+
+    return listings
+
+
+def _closest_container(anchor: Tag) -> Tag | None:
+    return anchor.find_parent(["article", "li", "div"])
+
+
+def _extract_price(text: str) -> int | None:
+    match = PRICE_REGEX.search(text)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _extract_external_id(container: Tag | None, fallback_url: str) -> str | None:
+    if container is None:
+        return None
+    for attr_name in ["data-id", "id", "data-logement-id"]:
+        value = container.get(attr_name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    fallback_match = re.search(r"(\d{3,})", fallback_url)
+    if fallback_match:
+        return fallback_match.group(1)
+    LOGGER.debug("No external_id found for listing URL: %s", fallback_url)
+    return None
+
+
+def _clean_optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        maybe_name = value.get("name")
+        if isinstance(maybe_name, str) and maybe_name.strip():
+            return maybe_name.strip()
+        return None
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or None
+    return None
+
+
+def _unique_by_fingerprint(items: list[Listing]) -> list[Listing]:
+    output: list[Listing] = []
+    seen: set[str] = set()
+    for item in items:
+        fingerprint = item.fingerprint
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        output.append(item)
+    return output

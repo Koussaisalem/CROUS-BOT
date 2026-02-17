@@ -1,0 +1,40 @@
+from __future__ import annotations
+
+import argparse
+import logging
+
+from src.config import load_settings
+from src.monitor import MonitorService
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="CROUS listing monitor with Telegram alerts")
+    parser.add_argument("--once", action="store_true", help="Run one polling cycle and exit")
+    parser.add_argument("--dry-run", action="store_true", help="Do not send Telegram messages")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    return parser
+
+
+def main() -> None:
+    parser = _build_parser()
+    args = parser.parse_args()
+
+    settings = load_settings()
+    log_level = logging.DEBUG if args.debug else getattr(logging, settings.log_level, logging.INFO)
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
+
+    service = MonitorService(settings)
+
+    if args.once:
+        total, new = service.poll_once(dry_run=args.dry_run)
+        logging.getLogger(__name__).info("One-shot done: total=%s new=%s", total, new)
+        return
+
+    service.run_forever(dry_run=args.dry_run)
+
+
+if __name__ == "__main__":
+    main()
