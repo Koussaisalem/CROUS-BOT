@@ -18,6 +18,12 @@ class Settings:
     state_db_path: str
     log_level: str
     user_agent: str
+    filter_max_price_eur: int | None
+    filter_include_keywords: tuple[str, ...]
+    heartbeat_enabled: bool
+    heartbeat_interval_hours: int
+    error_alert_threshold: int
+    error_alert_cooldown_minutes: int
 
 
 def _get_int(name: str, default: int, minimum: int) -> int:
@@ -33,6 +39,30 @@ def _get_required(name: str) -> str:
     if not value:
         raise ValueError(f"Missing required environment variable: {name}")
     return value
+
+
+def _get_bool(name: str, default: bool) -> bool:
+    raw_value = os.getenv(name, "true" if default else "false").strip().lower()
+    if raw_value in {"1", "true", "yes", "on"}:
+        return True
+    if raw_value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean value")
+
+
+def _get_optional_int(name: str) -> int | None:
+    raw_value = os.getenv(name, "").strip()
+    if not raw_value:
+        return None
+    return int(raw_value)
+
+
+def _get_keywords(name: str) -> tuple[str, ...]:
+    raw_value = os.getenv(name, "").strip()
+    if not raw_value:
+        return tuple()
+    keywords = [item.strip().lower() for item in raw_value.split(",") if item.strip()]
+    return tuple(dict.fromkeys(keywords))
 
 
 def load_settings() -> Settings:
@@ -51,4 +81,12 @@ def load_settings() -> Settings:
         user_agent=os.getenv(
             "USER_AGENT", "CROUS-BOT/1.0 (+personal-use; respectful polling)"
         ).strip(),
+        filter_max_price_eur=_get_optional_int("FILTER_MAX_PRICE_EUR"),
+        filter_include_keywords=_get_keywords("FILTER_INCLUDE_KEYWORDS"),
+        heartbeat_enabled=_get_bool("HEARTBEAT_ENABLED", default=False),
+        heartbeat_interval_hours=_get_int("HEARTBEAT_INTERVAL_HOURS", default=168, minimum=1),
+        error_alert_threshold=_get_int("ERROR_ALERT_THRESHOLD", default=3, minimum=1),
+        error_alert_cooldown_minutes=_get_int(
+            "ERROR_ALERT_COOLDOWN_MINUTES", default=180, minimum=1
+        ),
     )

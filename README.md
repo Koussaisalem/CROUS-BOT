@@ -7,6 +7,8 @@ Telegram bot workflow to monitor CROUS housing search results and alert on new l
 - Polls CROUS search URL on a safe interval with jitter.
 - Detects only **new** listings (deduplicated with persistent SQLite state).
 - Sends Telegram alerts immediately for unseen listings.
+- Supports optional smart filters (max price + keyword matching).
+- Sends optional heartbeat messages and repeated-failure alerts.
 - Stores secrets in environment variables (`.env`), not in code.
 - Uses conservative request defaults to reduce ban/rate-limit risk.
 
@@ -41,6 +43,15 @@ Telegram bot workflow to monitor CROUS housing search results and alert on new l
 - `CROUS_SEARCH_URL` (your CROUS search URL)
 - `TELEGRAM_BOT_TOKEN` (token from BotFather)
 - `TELEGRAM_CHAT_ID` (chat/user ID that receives alerts)
+
+Optional:
+
+- `FILTER_MAX_PRICE_EUR` (only alert when listing price is <= this value)
+- `FILTER_INCLUDE_KEYWORDS` (comma-separated keywords that must match title/city/residence/url)
+- `HEARTBEAT_ENABLED` (`true|false`, default `false`)
+- `HEARTBEAT_INTERVAL_HOURS` (default `168`)
+- `ERROR_ALERT_THRESHOLD` (default `3` consecutive failures)
+- `ERROR_ALERT_COOLDOWN_MINUTES` (default `180`)
 
 ## Run
 
@@ -83,6 +94,27 @@ Workflow file: `.github/workflows/crous-monitor.yml`
 - Dedup state is persisted between workflow runs using GitHub cache.
 - First run initializes state; alerts start for newly discovered unseen listings.
 - If cache is evicted by GitHub, dedup history resets and previously seen listings may alert again.
+- Manual runs can send a one-shot Telegram test with `test_telegram=true`.
+- Heartbeat is enabled in the GitHub workflow and sends only when interval is reached.
+- Failure alerts are sent only after repeated consecutive failures (to avoid alert noise).
+
+### Telegram commands (dynamic filters)
+
+Commands are checked automatically on each workflow run, then applied to filtering:
+
+- `/showfilters`
+- `/setmaxprice <eur>`
+- `/clearmaxprice`
+- `/setkeywords kw1,kw2`
+- `/clearkeywords`
+- `/help`
+
+Example:
+
+- Send `/setmaxprice 350`
+- Send `/setkeywords strasbourg,igbmc`
+
+The next scheduled run applies them and confirms back in Telegram.
 
 ## Safety defaults
 

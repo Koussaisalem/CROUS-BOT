@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import random
 import time
+from collections import OrderedDict
+from typing import Iterable
 
 from requests import RequestException
 
@@ -32,18 +34,60 @@ class MonitorService:
 
     def poll_once(self, dry_run: bool = False) -> tuple[int, int]:
         listings = self.client.fetch_listings(self.settings.crous_search_url)
-        new_listings = self.state_store.filter_new(listings)
+        filtered_listings = self._apply_filters(listings)
+        skipped_count = len(listings) - len(filtered_listings)
+        if skipped_count > 0:
+            LOGGER.info("Filtered out %s listing(s) using configured rules", skipped_count)
+        new_listings = self.state_store.filter_new(filtered_listings)
 
         if dry_run:
             for listing in new_listings:
                 LOGGER.info("[DRY-RUN] New listing: %s | %s", listing.title, listing.url)
-            return len(listings), len(new_listings)
+            return len(filtered_listings), len(new_listings)
 
         for listing in new_listings:
             self.notifier.send_new_listing(listing)
             LOGGER.info("Sent Telegram alert for: %s", listing.url)
 
-        return len(listings), len(new_listings)
+        return len(filtered_listings), len(new_listings)
+
+    def sync_telegram_commands(self, dry_run: bool = False) -> int:
+        raw_offset = self.state_store.get_meta("telegram_update_offset")
+        offset = int(raw_offset) if raw_offset else 0
+        updates = self.notifier.get_updates(offset=offset, limit=20)
+
+        if not updates:
+            return 0
+
+        processed = 0
+        max_update_id = offset - 1
+        for update in updates:
+            update_id = update.get("update_id")
+            if isinstance(update_id, int):
+                max_update_id = max(max_update_id, update_id)
+
+            message = update.get("message") or update.get("edited_message")
+            if not isinstance(message, dict):
+                continue
+
+            chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
+            chat_id = str(chat.get("id", ""))
+            if chat_id != self.settings.telegram_chat_id:
+                continue
+
+            text = str(message.get("text", "")).strip()
+            if not text.startswith("/"):
+                continue
+
+            self._handle_telegram_command(text=text, dry_run=dry_run)
+            processed += 1
+
+        if max_update_id >= offset and not dry_run:
+            self.state_store.set_meta("telegram_update_offset", str(max_update_id + 1))
+
+        if processed:
+            LOGGER.info("Processed %s Telegram command(s)", processed)
+        return processed
 
     def send_healthcheck(self, dry_run: bool = False) -> None:
         if dry_run:
@@ -52,20 +96,55 @@ class MonitorService:
         self.notifier.send_healthcheck()
         LOGGER.info("Sent Telegram healthcheck message")
 
+    def maybe_send_scheduled_heartbeat(self, dry_run: bool = False) -> bool:
+        if not self.settings.heartbeat_enabled:
+            return False
+        if not self.state_store.should_send_heartbeat(self.settings.heartbeat_interval_hours):
+            return False
+        if dry_run:
+            LOGGER.info("[DRY-RUN] Telegram heartbeat would be sent")
+            return True
+        self.notifier.send_heartbeat()
+        LOGGER.info("Sent scheduled heartbeat message")
+        return True
+
+    def register_success(self) -> None:
+        self.state_store.reset_failure_count()
+
+    def handle_failure(self, error: Exception, dry_run: bool = False) -> None:
+        failure_count = self.state_store.register_failure()
+        threshold = self.settings.error_alert_threshold
+        if failure_count < threshold:
+            return
+        if not self.state_store.should_send_error_alert(self.settings.error_alert_cooldown_minutes):
+            return
+        if dry_run:
+            LOGGER.warning(
+                "[DRY-RUN] Error alert would be sent (consecutive_failures=%s)", failure_count
+            )
+            return
+        self.notifier.send_error_alert(failure_count=failure_count, error_text=str(error))
+        LOGGER.warning("Sent repeated-failure alert (consecutive_failures=%s)", failure_count)
+
     def run_forever(self, dry_run: bool = False) -> None:
         failure_count = 0
         while True:
             try:
+                self.sync_telegram_commands(dry_run=dry_run)
+                self.maybe_send_scheduled_heartbeat(dry_run=dry_run)
                 total_count, new_count = self.poll_once(dry_run=dry_run)
                 failure_count = 0
+                self.register_success()
                 LOGGER.info("Poll finished: total=%s new=%s", total_count, new_count)
             except RequestException as exc:
                 failure_count += 1
+                self.handle_failure(exc, dry_run=dry_run)
                 backoff = min(300, 2 ** min(failure_count, 8))
                 LOGGER.warning("HTTP failure #%s (%s). Backing off for %ss", failure_count, exc, backoff)
                 time.sleep(backoff)
-            except Exception:
+            except Exception as exc:
                 failure_count += 1
+                self.handle_failure(exc, dry_run=dry_run)
                 backoff = min(300, 2 ** min(failure_count, 8))
                 LOGGER.exception("Unexpected failure #%s. Backing off for %ss", failure_count, backoff)
                 time.sleep(backoff)
@@ -76,6 +155,124 @@ class MonitorService:
             )
             LOGGER.debug("Sleeping for %ss before next poll", sleep_seconds)
             time.sleep(sleep_seconds)
+
+    def _apply_filters(self, listings: Iterable[Listing]) -> list[Listing]:
+        output: list[Listing] = []
+        max_price, keywords = self._get_effective_filters()
+
+        for listing in listings:
+            if max_price is not None and listing.price_eur is not None and listing.price_eur > max_price:
+                continue
+
+            if keywords:
+                haystack = " ".join(
+                    [
+                        listing.title,
+                        listing.city or "",
+                        listing.residence or "",
+                        listing.url,
+                    ]
+                ).lower()
+                if not any(keyword in haystack for keyword in keywords):
+                    continue
+
+            output.append(listing)
+
+        return output
+
+    def _get_effective_filters(self) -> tuple[int | None, tuple[str, ...]]:
+        max_price = self.settings.filter_max_price_eur
+        keywords = self.settings.filter_include_keywords
+
+        override_price = self.state_store.get_meta("filter_max_price_override")
+        if override_price:
+            max_price = int(override_price)
+
+        override_keywords = self.state_store.get_meta("filter_keywords_override")
+        if override_keywords:
+            parsed_keywords = [item.strip().lower() for item in override_keywords.split(",") if item.strip()]
+            keywords = tuple(OrderedDict.fromkeys(parsed_keywords).keys())
+
+        return max_price, keywords
+
+    def _handle_telegram_command(self, text: str, dry_run: bool) -> None:
+        command_token, _, remainder = text.partition(" ")
+        command = command_token.split("@", maxsplit=1)[0].lower()
+        arg = remainder.strip()
+
+        if command == "/setmaxprice":
+            if not arg.isdigit():
+                self._reply("Usage: /setmaxprice <amount_in_eur>", dry_run=dry_run)
+                return
+            if not dry_run:
+                self.state_store.set_meta("filter_max_price_override", arg)
+            max_price, keywords = self._get_effective_filters()
+            self._reply(self._format_filter_status(max_price, keywords), dry_run=dry_run)
+            return
+
+        if command == "/clearmaxprice":
+            if not dry_run:
+                self.state_store.set_meta("filter_max_price_override", "")
+            max_price, keywords = self._get_effective_filters()
+            self._reply(self._format_filter_status(max_price, keywords), dry_run=dry_run)
+            return
+
+        if command == "/setkeywords":
+            if not arg:
+                self._reply("Usage: /setkeywords keyword1,keyword2", dry_run=dry_run)
+                return
+            keywords = [item.strip().lower() for item in arg.split(",") if item.strip()]
+            if not keywords:
+                self._reply("Usage: /setkeywords keyword1,keyword2", dry_run=dry_run)
+                return
+            normalized = ",".join(OrderedDict.fromkeys(keywords).keys())
+            if not dry_run:
+                self.state_store.set_meta("filter_keywords_override", normalized)
+            max_price, active_keywords = self._get_effective_filters()
+            self._reply(self._format_filter_status(max_price, active_keywords), dry_run=dry_run)
+            return
+
+        if command == "/clearkeywords":
+            if not dry_run:
+                self.state_store.set_meta("filter_keywords_override", "")
+            max_price, keywords = self._get_effective_filters()
+            self._reply(self._format_filter_status(max_price, keywords), dry_run=dry_run)
+            return
+
+        if command == "/showfilters":
+            max_price, keywords = self._get_effective_filters()
+            self._reply(self._format_filter_status(max_price, keywords), dry_run=dry_run)
+            return
+
+        if command == "/help":
+            self._reply(
+                "Commands:\n"
+                "/showfilters\n"
+                "/setmaxprice <eur>\n"
+                "/clearmaxprice\n"
+                "/setkeywords kw1,kw2\n"
+                "/clearkeywords",
+                dry_run=dry_run,
+            )
+            return
+
+        self._reply("Unknown command. Send /help for available commands.", dry_run=dry_run)
+
+    def _reply(self, text: str, dry_run: bool) -> None:
+        if dry_run:
+            LOGGER.info("[DRY-RUN] Telegram reply: %s", text)
+            return
+        self.notifier.send_text(text)
+
+    @staticmethod
+    def _format_filter_status(max_price: int | None, keywords: tuple[str, ...]) -> str:
+        price_text = f"<= {max_price} €" if max_price is not None else "none"
+        keyword_text = ", ".join(keywords) if keywords else "none"
+        return (
+            "✅ Filters updated\n\n"
+            f"Max price: {price_text}\n"
+            f"Keywords: {keyword_text}"
+        )
 
 
 def _compute_sleep(interval: int, jitter: int) -> int:

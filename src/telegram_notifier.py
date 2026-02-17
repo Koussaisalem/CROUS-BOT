@@ -13,7 +13,8 @@ class TelegramNotifier:
     def __init__(self, bot_token: str, chat_id: str, timeout_seconds: int) -> None:
         self.chat_id = chat_id
         self.timeout_seconds = timeout_seconds
-        self.endpoint = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        self.base_endpoint = f"https://api.telegram.org/bot{bot_token}"
+        self.endpoint = f"{self.base_endpoint}/sendMessage"
 
     def send_new_listing(self, listing: Listing) -> None:
         message = _format_listing_message(listing)
@@ -21,6 +22,41 @@ class TelegramNotifier:
 
     def send_healthcheck(self) -> None:
         self._send_message("✅ CROUS monitor healthcheck: Telegram notifications are working.")
+
+    def send_heartbeat(self) -> None:
+        self._send_message("💓 CROUS monitor heartbeat: workflow is running normally.")
+
+    def send_error_alert(self, failure_count: int, error_text: str) -> None:
+        message = (
+            "⚠️ CROUS monitor warning\n\n"
+            f"Consecutive failures: {failure_count}\n"
+            f"Latest error: {error_text[:300]}"
+        )
+        self._send_message(message)
+
+    def send_text(self, text: str) -> None:
+        self._send_message(text)
+
+    def get_updates(self, offset: int, limit: int = 20) -> list[dict]:
+        payload = {
+            "offset": offset,
+            "limit": limit,
+            "allowed_updates": ["message", "edited_message"],
+        }
+        response = requests.get(
+            f"{self.base_endpoint}/getUpdates",
+            params=payload,
+            timeout=self.timeout_seconds,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data.get("ok"):
+            LOGGER.warning("Telegram getUpdates returned non-ok payload")
+            return []
+        result = data.get("result", [])
+        if not isinstance(result, list):
+            return []
+        return [item for item in result if isinstance(item, dict)]
 
     def _send_message(self, message: str) -> None:
         payload = {
