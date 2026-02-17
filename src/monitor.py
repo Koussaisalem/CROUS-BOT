@@ -33,7 +33,12 @@ class MonitorService:
         )
 
     def poll_once(self, dry_run: bool = False) -> tuple[int, int]:
-        listings = self.client.fetch_listings(self.settings.crous_search_url)
+        listings: list[Listing] = []
+        for search_url in self.settings.crous_search_urls:
+            source_listings = self.client.fetch_listings(search_url)
+            LOGGER.info("Fetched %s listing(s) from %s", len(source_listings), search_url)
+            listings.extend(source_listings)
+
         filtered_listings = self._apply_filters(listings)
         skipped_count = len(listings) - len(filtered_listings)
         if skipped_count > 0:

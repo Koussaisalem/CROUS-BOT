@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 @dataclass(frozen=True)
 class Settings:
-    crous_search_url: str
+    crous_search_urls: tuple[str, ...]
     telegram_bot_token: str
     telegram_chat_id: str
     poll_interval_seconds: int
@@ -41,6 +41,17 @@ def _get_required(name: str) -> str:
     return value
 
 
+def _get_search_urls() -> tuple[str, ...]:
+    raw_value = os.getenv("CROUS_SEARCH_URLS", "").strip()
+    if raw_value:
+        urls = [item.strip() for item in raw_value.split(",") if item.strip()]
+        if not urls:
+            raise ValueError("CROUS_SEARCH_URLS must contain at least one URL")
+        return tuple(dict.fromkeys(urls))
+
+    return (_get_required("CROUS_SEARCH_URL"),)
+
+
 def _get_bool(name: str, default: bool) -> bool:
     raw_value = os.getenv(name, "true" if default else "false").strip().lower()
     if raw_value in {"1", "true", "yes", "on"}:
@@ -69,7 +80,7 @@ def load_settings() -> Settings:
     load_dotenv()
 
     return Settings(
-        crous_search_url=_get_required("CROUS_SEARCH_URL"),
+        crous_search_urls=_get_search_urls(),
         telegram_bot_token=_get_required("TELEGRAM_BOT_TOKEN"),
         telegram_chat_id=_get_required("TELEGRAM_CHAT_ID"),
         poll_interval_seconds=_get_int("POLL_INTERVAL_SECONDS", default=180, minimum=30),

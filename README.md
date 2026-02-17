@@ -40,9 +40,13 @@ Telegram bot workflow to monitor CROUS housing search results and alert on new l
 
 ## Required environment variables
 
-- `CROUS_SEARCH_URL` (your CROUS search URL)
+- `CROUS_SEARCH_URL` (single URL mode)
 - `TELEGRAM_BOT_TOKEN` (token from BotFather)
 - `TELEGRAM_CHAT_ID` (chat/user ID that receives alerts)
+
+For multiple locations, use:
+
+- `CROUS_SEARCH_URLS` (comma-separated URLs). When set, it overrides `CROUS_SEARCH_URL`.
 
 Optional:
 
@@ -81,6 +85,7 @@ GitHub Actions can run this monitor every 5 minutes (GitHub minimum schedule gra
 2. In your repo, open **Settings → Secrets and variables → Actions**.
 3. Add these repository secrets:
 	- `CROUS_SEARCH_URL`
+	- `CROUS_SEARCH_URLS` (optional, comma-separated multi-location mode)
 	- `TELEGRAM_BOT_TOKEN`
 	- `TELEGRAM_CHAT_ID`
 4. Enable the workflow in **Actions** tab (`CROUS Monitor`).
@@ -115,6 +120,10 @@ Example:
 - Send `/setkeywords strasbourg,igbmc`
 
 The next scheduled run applies them and confirms back in Telegram.
+
+Multi-location example for `CROUS_SEARCH_URLS`:
+
+`https://trouverunlogement.lescrous.fr/tools/42/search?bounds=...,https://trouverunlogement.lescrous.fr/tools/42/search?bounds=...`
 
 ## Safety defaults
 

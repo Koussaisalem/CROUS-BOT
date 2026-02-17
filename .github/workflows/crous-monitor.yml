@@ -52,6 +52,7 @@ jobs:
       - name: Run one polling cycle
         env:
           CROUS_SEARCH_URL: ${{ secrets.CROUS_SEARCH_URL }}
+          CROUS_SEARCH_URLS: ${{ secrets.CROUS_SEARCH_URLS }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           POLL_INTERVAL_SECONDS: "300"
