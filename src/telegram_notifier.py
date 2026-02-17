@@ -17,6 +17,12 @@ class TelegramNotifier:
 
     def send_new_listing(self, listing: Listing) -> None:
         message = _format_listing_message(listing)
+        self._send_message(message)
+
+    def send_healthcheck(self) -> None:
+        self._send_message("✅ CROUS monitor healthcheck: Telegram notifications are working.")
+
+    def _send_message(self, message: str) -> None:
         payload = {
             "chat_id": self.chat_id,
             "text": message,

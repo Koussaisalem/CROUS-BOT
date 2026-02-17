@@ -2,6 +2,12 @@ name: CROUS Monitor
 
 on:
   workflow_dispatch:
+    inputs:
+      test_telegram:
+        description: "Send one Telegram healthcheck message before polling"
+        type: boolean
+        required: false
+        default: false
   schedule:
     - cron: "*/5 * * * *"
 
@@ -55,7 +61,12 @@ jobs:
           STATE_DB_PATH: .state/state.db
           LOG_LEVEL: INFO
           USER_AGENT: CROUS-BOT/1.0 (+personal-use; github-actions)
-        run: python -m src.main --once
+        run: |
+          EXTRA_ARGS=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.test_telegram }}" = "true" ]; then
+            EXTRA_ARGS="--test-telegram"
+          fi
+          python -m src.main --once ${EXTRA_ARGS}
 
       - name: Save updated dedup state
         if: always()

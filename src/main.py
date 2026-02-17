@@ -11,6 +11,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CROUS listing monitor with Telegram alerts")
     parser.add_argument("--once", action="store_true", help="Run one polling cycle and exit")
     parser.add_argument("--dry-run", action="store_true", help="Do not send Telegram messages")
+    parser.add_argument(
+        "--test-telegram",
+        action="store_true",
+        help="Send one Telegram healthcheck message during this run",
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     return parser
 
@@ -29,6 +34,8 @@ def main() -> None:
     service = MonitorService(settings)
 
     if args.once:
+        if args.test_telegram:
+            service.send_healthcheck(dry_run=args.dry_run)
         total, new = service.poll_once(dry_run=args.dry_run)
         logging.getLogger(__name__).info("One-shot done: total=%s new=%s", total, new)
         return

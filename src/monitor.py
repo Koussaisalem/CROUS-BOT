@@ -45,6 +45,13 @@ class MonitorService:
 
         return len(listings), len(new_listings)
 
+    def send_healthcheck(self, dry_run: bool = False) -> None:
+        if dry_run:
+            LOGGER.info("[DRY-RUN] Telegram healthcheck would be sent")
+            return
+        self.notifier.send_healthcheck()
+        LOGGER.info("Sent Telegram healthcheck message")
+
     def run_forever(self, dry_run: bool = False) -> None:
         failure_count = 0
         while True:

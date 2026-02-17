@@ -50,6 +50,12 @@ Dry run (no Telegram sends, useful for testing parser):
 python -m src.main --once --dry-run --debug
 ```
 
+Send a single Telegram healthcheck message (one-shot):
+
+```bash
+python -m src.main --once --test-telegram
+```
+
 Continuous monitor:
 
 ```bash
@@ -67,7 +73,8 @@ GitHub Actions can run this monitor every 5 minutes (GitHub minimum schedule gra
 	- `TELEGRAM_BOT_TOKEN`
 	- `TELEGRAM_CHAT_ID`
 4. Enable the workflow in **Actions** tab (`CROUS Monitor`).
-5. Optional: trigger manually with **Run workflow** to test immediately.
+5. Optional: trigger manually with **Run workflow**.
+	- Set `test_telegram=true` to send one healthcheck Telegram message immediately.
 
 Workflow file: `.github/workflows/crous-monitor.yml`
 
